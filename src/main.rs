@@ -3,14 +3,13 @@ extern crate clap;
 
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
-use std::io::Write;
 use std::iter::Iterator;
-use std::process::Command;
-use std::process::Stdio;
 use std::str;
 
 use clap::{App, Arg};
 use itertools::Itertools;
+
+mod shell_runner;
 
 fn main() {
     let matches = App::new("gb")
@@ -57,7 +56,7 @@ fn main() {
 
     let column = value_t!(matches, "column", usize);
 
-    let mut strs = strings
+    let mut strs: Vec<(&str, &str)> = strings
         .iter()
         .map(|s| &s[..])
         .map(|s| {
@@ -79,10 +78,10 @@ fn main() {
     let map_expression = matches.value_of("map");
 
     let map_result = group.into_iter().map(|(k, v)| {
-        let values: Vec<&str> = v.into_iter().map(|t| t.1).collect_vec();
+        let values: Vec<String> = v.into_iter().map(|t| t.1.to_owned()).collect_vec();
         (k, match map_expression {
-            None => values.into_iter().map(str::to_owned).collect_vec(),
-            Some(expr) => run(values, expr)
+            None => values,
+            Some(expr) => shell_runner::execute(values, expr).unwrap().0 // FIXME unwrap
         })
     }).collect_vec();
 
@@ -95,29 +94,10 @@ fn main() {
             }
         }
         Some(expr) => {
-            let values: Vec<&str> = map_result.iter().flat_map(|x| x.1.iter().map(|s| &s[..]).collect_vec()).collect_vec();
-            for value in run(values, expr) {
+            let values: Vec<String> = map_result.into_iter().flat_map(|x| x.1).collect_vec();
+            for value in shell_runner::execute(values, expr).unwrap().0 /* FIXME unwrap */ {
                 println!("{}", value);
             }
         }
     }
-}
-
-fn run(values: Vec<&str>, expr: &str) -> Vec<String> {
-    let mut cmd = Command::new("sh")
-        .arg("-c")
-        .arg(expr)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        // handle stderr
-        .spawn()
-        .unwrap();
-    cmd.stdin
-        .as_mut()
-        .unwrap()
-        .write_all((values.join("\n") + "\n").as_bytes()).unwrap();
-    let stdout = cmd.wait_with_output().unwrap().stdout;
-    let output = String::from_utf8(stdout).unwrap();
-    output.split("\n").map(str::to_owned)
-        .filter(|l| { !l.is_empty() }).collect_vec()
 }
